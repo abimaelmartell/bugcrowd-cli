@@ -37,7 +37,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "watch": "tsc -p tsconfig.json --watch",
-    "test": "tsc -p tsconfig.test.json && node --test \"build-test/test/*.test.js\"",
+    "test": "tsc -p tsconfig.test.json && cd build-test && node --test",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "prepublishOnly": "npm run build"
   },
