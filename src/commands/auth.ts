@@ -1,12 +1,175 @@
 import { readFileSync } from "node:fs";
 
-import { clampLimit, type QueryValue } from "../lib/client.js";
+import { BugcrowdClient, clampLimit, type QueryValue } from "../lib/client.js";
 import { rejectExtraPositionals, requirePositional, type Command } from "../lib/command.js";
-import { configPath, DEFAULT_API_VERSION, redactToken, resolveConfig } from "../lib/config.js";
+import { configPath, DEFAULT_API_VERSION, normalizeToken, redactToken, resolveConfig } from "../lib/config.js";
+import {
+  isMacOS,
+  keychainDelete,
+  keychainStore,
+  KEYCHAIN_TOKEN_COMMAND,
+  promptSecret,
+  readAllStdin,
+  readConfigForWrite,
+  writeConfig,
+} from "../lib/credentials.js";
 import { CliError } from "../lib/errors.js";
 import type { Document } from "../lib/jsonapi.js";
 import { normalize } from "../lib/jsonapi.js";
 import { text } from "../lib/output.js";
+
+const authLogin: Command = {
+  name: "auth login",
+  summary: "Store credentials once so later runs need no environment setup",
+  description:
+    "Prompts for your Bugcrowd API credential pair (input is not echoed), verifies it\n" +
+    "against the API, and saves it locally. Every later invocation — including runs an\n" +
+    "agent or script starts on its own — picks it up with no environment variables.\n" +
+    "\n" +
+    "Two storage backends:\n" +
+    "  default      the config file, created mode 600 (owner read/write only)\n" +
+    "  --keychain   the macOS keychain; the config file then holds only a lookup\n" +
+    "               command, so no secret is written to disk in plaintext\n" +
+    "\n" +
+    "For any other secret manager, skip this command and set `token_command` in the\n" +
+    "config file to something that prints the pair on stdout, for example:\n" +
+    '  {"token_command": "op read op://Private/Bugcrowd/credential"}\n' +
+    '  {"token_command": "pass show bugcrowd/api"}',
+  flags: [
+    {
+      name: "keychain",
+      type: "boolean",
+      desc: "Store in the macOS keychain instead of the config file (macOS only)",
+    },
+    { name: "stdin", type: "boolean", desc: "Read the credential pair from stdin instead of prompting" },
+    { name: "verify", type: "boolean", desc: "Check the credentials against the API before saving (--no-verify to skip)" },
+  ],
+  examples: [
+    "bugcrowd auth login",
+    "bugcrowd auth login --keychain",
+    "echo 'api-user:api-secret' | bugcrowd auth login --stdin",
+  ],
+  async run(ctx) {
+    rejectExtraPositionals(ctx, 0);
+    const useKeychain = ctx.args.bool("keychain");
+
+    if (useKeychain && !isMacOS()) {
+      throw new CliError("--keychain is only available on macOS", {
+        exitCode: 2,
+        details: [
+          "On Linux, either use the default config-file storage (mode 600), or point",
+          "`token_command` at your own secret manager. See `bugcrowd auth login --help`.",
+        ],
+      });
+    }
+
+    const raw = ctx.args.bool("stdin")
+      ? await readAllStdin()
+      : await promptSecret("Bugcrowd API credentials (username:password): ");
+
+    const entered = raw.split("\n")[0]!.trim();
+    if (entered === "") {
+      // Reached when stdin is empty or closed, which is the usual shape of a
+      // non-interactive invocation that forgot to pipe anything in.
+      throw new CliError("no credentials entered", {
+        exitCode: 2,
+        details: [
+          "Run `bugcrowd auth login` from a terminal to be prompted, or pipe the pair in:",
+          "  echo 'api-user:api-secret' | bugcrowd auth login --stdin",
+        ],
+      });
+    }
+
+    const token = normalizeToken(entered);
+    if (!token.includes(":")) {
+      throw new CliError("credentials must be in `username:password` form", {
+        exitCode: 2,
+        details: [
+          "Bugcrowd API credentials are a pair, shown when you create them in your",
+          "account settings. Join them with a colon, e.g. `abc123:def456`.",
+        ],
+      });
+    }
+
+    // Verify before persisting, so a typo is caught now rather than on the next command.
+    if (ctx.args.boolOrUndefined("verify") !== false) {
+      const probe = new BugcrowdClient(
+        {
+          token,
+          baseUrl: ctx.args.str("base-url") ?? process.env["BUGCROWD_BASE_URL"] ?? "https://api.bugcrowd.com",
+          apiVersion: ctx.args.str("api-version") ?? DEFAULT_API_VERSION,
+          tokenSource: "auth login",
+        },
+        { timeoutMs: (ctx.args.int("timeout") ?? 30) * 1000, verbose: ctx.args.bool("verbose") },
+      );
+      await probe.request<Document>("/organizations", { query: { "page[limit]": 1 } });
+    }
+
+    const path = configPath();
+    const config = readConfigForWrite(path);
+
+    if (useKeychain) {
+      keychainStore(token);
+      config.token_command = KEYCHAIN_TOKEN_COMMAND;
+      // Drop any literal token so the keychain becomes the single source of truth.
+      delete config.token;
+    } else {
+      config.token = token;
+      if (config.token_command === KEYCHAIN_TOKEN_COMMAND) delete config.token_command;
+    }
+    writeConfig(path, config);
+
+    if (!ctx.out.isText) {
+      ctx.out.json({ ok: true, storage: useKeychain ? "keychain" : "config-file", config_path: path });
+      return;
+    }
+    ctx.out.line(
+      useKeychain
+        ? `Stored in the macOS keychain. ${path} now holds only a lookup command.`
+        : `Stored in ${path} (mode 600).`,
+    );
+    ctx.out.line("Later runs pick this up automatically — no environment variables needed.");
+  },
+};
+
+const authLogout: Command = {
+  name: "auth logout",
+  summary: "Remove locally stored credentials",
+  description: "Clears the token from the config file and, if present, from the macOS keychain.",
+  examples: ["bugcrowd auth logout"],
+  async run(ctx) {
+    rejectExtraPositionals(ctx, 0);
+    const path = configPath();
+    const config = readConfigForWrite(path);
+    const removed: string[] = [];
+
+    if (config.token !== undefined) {
+      delete config.token;
+      removed.push(`token in ${path}`);
+    }
+    if (config.token_command === KEYCHAIN_TOKEN_COMMAND) {
+      delete config.token_command;
+      removed.push(`keychain lookup in ${path}`);
+    }
+    if (removed.length > 0) writeConfig(path, config);
+
+    if (isMacOS() && keychainDelete()) removed.push("macOS keychain entry");
+
+    if (!ctx.out.isText) {
+      ctx.out.json({ ok: true, removed });
+      return;
+    }
+    if (removed.length === 0) {
+      ctx.out.line("Nothing stored locally.");
+    } else {
+      for (const item of removed) ctx.out.line(`Removed ${item}.`);
+    }
+    // An env var would keep working after this and silently override storage later.
+    for (const name of ["BUGCROWD_API_TOKEN", "BUGCROWD_TOKEN", "BUGCROWD_TOKEN_COMMAND"]) {
+      if (process.env[name]) ctx.out.line(ctx.out.dim(`Note: ${name} is still set in this shell and takes precedence.`));
+    }
+  },
+};
 
 const authStatus: Command = {
   name: "auth status",
@@ -15,13 +178,18 @@ const authStatus: Command = {
     "Resolves credentials, calls the API once, and reports the organizations and\n" +
     "programs the token can see. Exits non-zero if the token is missing or rejected.\n" +
     "\n" +
-    "Credentials are read in this order:\n" +
+    "Credentials are read in this order, first match wins:\n" +
     "  1. --token\n" +
     "  2. BUGCROWD_API_TOKEN, then BUGCROWD_TOKEN\n" +
-    `  3. ${configPath()} (key "token")\n` +
+    "  3. BUGCROWD_TOKEN_COMMAND\n" +
+    `  4. ${configPath()} -> token_command\n` +
+    `  5. ${configPath()} -> token\n` +
     "\n" +
     "The value is the `username:password` pair Bugcrowd shows when you create an API\n" +
-    "credential. A full `Token username:password` header value is also accepted.",
+    "credential. A full `Token username:password` header value is also accepted.\n" +
+    "\n" +
+    "Run `bugcrowd auth login` to store credentials so 4 or 5 applies and no shell\n" +
+    "setup is needed.",
   examples: ["bugcrowd auth status", "bugcrowd auth status --json"],
   async run(ctx) {
     rejectExtraPositionals(ctx, 0);
@@ -56,6 +224,15 @@ const authStatus: Command = {
     ctx.out.line(`Token source:  ${config.tokenSource}`);
     ctx.out.line(`Base URL:      ${config.baseUrl}`);
     ctx.out.line(`API version:   ${config.apiVersion}`);
+    // Credentials coming from the environment will not be there for a run started by
+    // something else, which is exactly the case people trip over.
+    if (config.tokenSource.startsWith("BUGCROWD_") || config.tokenSource === "--token flag") {
+      ctx.out.line();
+      ctx.out.line(
+        ctx.out.dim("Credentials came from this shell, so a run started elsewhere will not see them."),
+      );
+      ctx.out.line(ctx.out.dim("Run `bugcrowd auth login` to store them for every later run."));
+    }
     ctx.out.line();
     ctx.out.line(`${ctx.out.bold("Organizations")} (${orgs.length})`);
     for (const org of orgs) ctx.out.line(`  ${text(org["name"])}  ${ctx.out.dim(org.id)}`);
@@ -236,5 +413,4 @@ function splitOnce(value: string, separator: string): [string, string | undefine
   return [value.slice(0, index), value.slice(index + separator.length)];
 }
 
-export const DEFAULT_VERSION_NOTE = DEFAULT_API_VERSION;
-export const authCommands: readonly Command[] = [authStatus, rawApi];
+export const authCommands: readonly Command[] = [authStatus, authLogin, authLogout, rawApi];

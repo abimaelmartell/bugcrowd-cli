@@ -94,11 +94,19 @@ test("non-2xx responses raise ApiError carrying the JSON:API errors", async () =
   );
 });
 
-test("401 exits with the auth code and explains the token format", async () => {
+test("401 exits with the auth code and names where the token came from", async () => {
   const { client } = makeClient([{ status: 401, body: { errors: [{ title: "Unauthorized" }] } }]);
   await assert.rejects(
     () => client.request("/programs"),
-    (err: unknown) => err instanceof ApiError && err.exitCode === 77 && err.details.join("\n").includes("username:password"),
+    (err: unknown) => {
+      assert.ok(err instanceof ApiError);
+      assert.equal(err.exitCode, 77);
+      const details = err.details.join("\n");
+      assert.match(details, /username:password/);
+      // Points at the actual credential source rather than assuming an env var.
+      assert.match(details, /The token from test was rejected/);
+      return true;
+    },
   );
 });
 

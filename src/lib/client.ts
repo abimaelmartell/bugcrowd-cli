@@ -122,7 +122,13 @@ export class BugcrowdClient {
       const parsed = parseMaybeJson(text);
 
       if (!response.ok) {
-        throw new ApiError({ status: response.status, method, url, body: parsed ?? text });
+        throw new ApiError({
+          status: response.status,
+          method,
+          url,
+          body: parsed ?? text,
+          tokenSource: this.config.tokenSource,
+        });
       }
       return (parsed ?? {}) as T;
     }

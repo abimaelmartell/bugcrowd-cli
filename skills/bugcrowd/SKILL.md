@@ -16,8 +16,10 @@ bugcrowd auth status --json
 ```
 
 - Command not found → `npm install -g bugcrowd-cli`
-- Exit code `77` → credentials missing or rejected. Ask the user for `BUGCROWD_API_TOKEN`
-  (their Bugcrowd API `username:password` pair). Do not retry.
+- Exit code `77` → credentials missing or rejected. Do not retry. Ask the user to run
+  `bugcrowd auth login` (or `--keychain` on macOS) once; that stores them so every run,
+  including ones you start yourself, picks them up with no environment setup. Do not ask
+  them to export a variable into your shell, and never put a credential in a command line.
 
 The output lists the organizations and program codes the token can reach. You need a
 program code for most filters, so start here rather than guessing.

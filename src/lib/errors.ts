@@ -19,10 +19,10 @@ export class ApiError extends CliError {
   readonly url: string;
   readonly body: unknown;
 
-  constructor(args: { status: number; method: string; url: string; body: unknown }) {
+  constructor(args: { status: number; method: string; url: string; body: unknown; tokenSource?: string }) {
     super(`${args.method} ${stripBase(args.url)} failed with HTTP ${args.status}`, {
       exitCode: args.status === 401 || args.status === 403 ? 77 : 1,
-      details: describeApiErrors(args.body, args.status),
+      details: describeApiErrors(args.body, args.status, args.tokenSource),
     });
     this.name = "ApiError";
     this.status = args.status;
@@ -45,7 +45,7 @@ function stripBase(url: string): string {
  * Bugcrowd returns JSON:API error objects. Pull out the human-readable parts so the
  * caller sees "severity must be between 1 and 5" instead of a bare status code.
  */
-function describeApiErrors(body: unknown, status: number): string[] {
+function describeApiErrors(body: unknown, status: number, tokenSource?: string): string[] {
   const lines: string[] = [];
 
   if (body && typeof body === "object" && Array.isArray((body as { errors?: unknown }).errors)) {
@@ -70,8 +70,15 @@ function describeApiErrors(body: unknown, status: number): string[] {
 
   if (status === 401) {
     lines.push("");
-    lines.push("The token was rejected. Check BUGCROWD_API_TOKEN — it must be `username:password`");
-    lines.push("as shown on the Bugcrowd API credentials page. Run `bugcrowd auth status` to retest.");
+    // Name where the credentials actually came from; "check BUGCROWD_API_TOKEN" is
+    // misleading advice when they were loaded from a config file or helper command.
+    lines.push(
+      tokenSource
+        ? `The token from ${tokenSource} was rejected.`
+        : "The token was rejected.",
+    );
+    lines.push("It must be the `username:password` pair shown on the Bugcrowd API credentials");
+    lines.push("page. Run `bugcrowd auth login` to store a new one, or `bugcrowd auth status` to retest.");
   } else if (status === 403) {
     lines.push("");
     lines.push("The token authenticated but lacks access to this resource. API tokens inherit the");

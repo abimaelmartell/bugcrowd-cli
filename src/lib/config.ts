@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -21,8 +22,14 @@ export interface ResolvedConfig {
   tokenSource: string;
 }
 
-interface ConfigFile {
+export interface ConfigFile {
   token?: string;
+  /**
+   * Shell command whose stdout is the token. Lets credentials live in the macOS
+   * keychain, 1Password, `pass`, Vault, or anything else with a CLI, instead of
+   * sitting in plaintext on disk.
+   */
+  token_command?: string;
   base_url?: string;
   api_version?: string;
 }
@@ -63,6 +70,63 @@ export interface ConfigOverrides {
 }
 
 /**
+ * Runs a `token_command` and returns its stdout as the token.
+ *
+ * The command comes from a file the user owns, so it carries the same trust as their
+ * shell profile. stderr is inherited so an interactive unlock prompt (1Password, Vault)
+ * is still visible, and stdout is captured rather than echoed so the secret is not
+ * printed. A timeout keeps a hung helper from wedging every invocation.
+ */
+function runTokenCommand(command: string, source: string): string {
+  let stdout: string;
+  try {
+    stdout = execFileSync("/bin/sh", ["-c", command], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "inherit"],
+      timeout: 30_000,
+      maxBuffer: 1024 * 1024,
+    });
+  } catch (err) {
+    const status = (err as { status?: number | null }).status;
+    const signal = (err as { signal?: string | null }).signal;
+    const reason = signal === "SIGTERM" ? "timed out after 30s" : `exited with status ${status ?? "unknown"}`;
+    throw new CliError(`token command ${reason}`, {
+      exitCode: 77,
+      details: [`Command (from ${source}): ${command}`, "Run it yourself to see why it failed."],
+    });
+  }
+
+  // Take the first line: helpers such as `op read` may append a trailing newline, and a
+  // multi-line result is far more likely to be an error banner than a credential.
+  const token = stdout.split("\n")[0]!.trim();
+  if (token === "") {
+    throw new CliError("token command produced no output", {
+      exitCode: 77,
+      details: [`Command (from ${source}): ${command}`, "It must print the `username:password` pair on stdout."],
+    });
+  }
+  return token;
+}
+
+/**
+ * Warns when a config file holding a literal token is readable beyond its owner.
+ * Only a literal token is worth warning about: a `token_command` file holds no secret.
+ */
+function warnIfWorldReadable(path: string): void {
+  try {
+    const mode = statSync(path).mode & 0o777;
+    if ((mode & 0o077) !== 0) {
+      process.stderr.write(
+        `bugcrowd: warning: ${path} is mode ${mode.toString(8).padStart(3, "0")} and holds a plaintext token.\n` +
+          `bugcrowd: run \`chmod 600 ${path}\` to restrict it to your user.\n`,
+      );
+    }
+  } catch {
+    // A stat failure is not worth failing the command over.
+  }
+}
+
+/**
  * Resolves credentials from, in order of precedence: explicit flag, environment,
  * config file. Throws a CliError with setup instructions when nothing is found.
  */
@@ -81,22 +145,36 @@ export function resolveConfig(overrides: ConfigOverrides = {}): ResolvedConfig {
   } else if (process.env["BUGCROWD_TOKEN"]) {
     token = process.env["BUGCROWD_TOKEN"];
     tokenSource = "BUGCROWD_TOKEN";
+  } else if (process.env["BUGCROWD_TOKEN_COMMAND"]) {
+    tokenSource = "BUGCROWD_TOKEN_COMMAND";
+    token = runTokenCommand(process.env["BUGCROWD_TOKEN_COMMAND"]!, tokenSource);
+  } else if (file?.data.token_command) {
+    // Deliberately ahead of a literal `token`: someone who configured a command meant
+    // it, and a leftover literal from before the switch must not silently win.
+    tokenSource = `${file.path} (token_command)`;
+    token = runTokenCommand(file.data.token_command, tokenSource);
   } else if (file?.data.token) {
     token = file.data.token;
     tokenSource = file.path;
+    warnIfWorldReadable(file.path);
   }
 
   if (!token || token.trim() === "") {
     throw new CliError("no Bugcrowd API token configured", {
       exitCode: 77,
       details: [
-        "Set one of the following:",
+        "Store credentials once so every later run — including ones agents start",
+        "themselves — picks them up without any environment setup:",
+        "",
+        "  bugcrowd auth login              # saves to the config file, mode 600",
+        "  bugcrowd auth login --keychain   # saves to the macOS keychain instead",
+        "",
+        "Or supply them per-invocation:",
         "  export BUGCROWD_API_TOKEN='username:password'",
-        `  ${configPath()}  ->  {"token": "username:password"}`,
         "  bugcrowd --token 'username:password' ...",
         "",
         "Bugcrowd API credentials are a username/password pair created under your",
-        "account settings; pass them joined by a colon. See `bugcrowd auth --help`.",
+        "account settings; pass them joined by a colon. See `bugcrowd auth login --help`.",
       ],
     });
   }

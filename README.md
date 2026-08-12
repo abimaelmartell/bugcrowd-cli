@@ -32,21 +32,58 @@ Requires Node.js 20 or newer. No runtime dependencies.
 ## Authenticate
 
 Bugcrowd API credentials are a **username/password pair**, created under your Bugcrowd
-account settings. Pass them joined by a colon:
+account settings. Store them once:
 
 ```bash
-export BUGCROWD_API_TOKEN='your-api-username:your-api-password'
-bugcrowd auth status
+bugcrowd auth login          # prompts (input is not echoed), verifies, then saves
+bugcrowd auth status         # confirms it works and lists reachable orgs and programs
 ```
 
-`auth status` confirms the token works and prints the organizations and programs it can
-reach — a good first call, and a good way to discover the program codes you'll filter by.
+`auth login` writes to `~/.config/bugcrowd/config.json` with mode `600`. Every later
+invocation reads it — including runs started by a script, a cron job, or an agent — so
+there is no environment to export and nothing to re-enter.
 
-Credentials are resolved in this order:
+`auth status` is a good first call: it prints the organizations and programs the token can
+reach, which is how you discover the program codes you'll filter by.
+
+### Storage options
+
+| Where | How |
+| --- | --- |
+| Config file, mode 600 | `bugcrowd auth login` |
+| macOS keychain | `bugcrowd auth login --keychain` |
+| 1Password, `pass`, Vault, … | set `token_command` (below) |
+| Per-command | `BUGCROWD_API_TOKEN`, or `--token` |
+
+`--keychain` stores the secret in the login keychain and leaves only a lookup command in
+the config file, so no plaintext credential is written to disk. Reads are
+non-interactive — no unlock prompt on each run.
+
+For any other secret manager, set `token_command` to something that prints the pair on
+stdout:
+
+```json
+{ "token_command": "op read op://Private/Bugcrowd/credential" }
+{ "token_command": "pass show bugcrowd/api" }
+{ "token_command": "vault kv get -field=token secret/bugcrowd" }
+```
+
+`bugcrowd auth logout` removes whatever was stored.
+
+### Resolution order
+
+First match wins:
 
 1. `--token 'user:secret'`
 2. `BUGCROWD_API_TOKEN`, then `BUGCROWD_TOKEN`
-3. `~/.config/bugcrowd/config.json` → `{"token": "user:secret"}`
+3. `BUGCROWD_TOKEN_COMMAND`
+4. config file → `token_command`
+5. config file → `token`
+
+`token_command` deliberately outranks a literal `token` in the same file, so switching to a
+secret manager can't be silently undone by a leftover plaintext value. If a config file
+holding a literal token is readable by anyone but you, the CLI warns and tells you to
+`chmod 600` it.
 
 Tokens carry the permissions of the user that created them, and are pinned to an API
 version. This CLI sends `Bugcrowd-Version: V1.1.0` by default; override with
@@ -56,6 +93,8 @@ version. This CLI sends `Bugcrowd-Version: V1.1.0` by default; override with
 
 | Command | Purpose |
 | --- | --- |
+| `auth login` | Store credentials locally so later runs need no setup |
+| `auth logout` | Remove stored credentials |
 | `auth status` | Verify the token, list reachable orgs and programs |
 | `submissions list` | List and filter submissions |
 | `submissions get <id>` | One submission in full, relationships resolved |
@@ -204,6 +243,7 @@ for piping.
 | --- | --- |
 | `BUGCROWD_API_TOKEN` | Credentials as `user:secret` |
 | `BUGCROWD_TOKEN` | Fallback if the above is unset |
+| `BUGCROWD_TOKEN_COMMAND` | Command whose stdout is the credential pair |
 | `BUGCROWD_API_VERSION` | Value for the `Bugcrowd-Version` header |
 | `BUGCROWD_BASE_URL` | Override the API base URL |
 | `BUGCROWD_CONFIG` | Path to the config file |

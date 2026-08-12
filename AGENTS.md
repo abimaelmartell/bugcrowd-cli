@@ -11,9 +11,21 @@ need for almost every filter:
 bugcrowd auth status --json
 ```
 
-Exit code `77` means the token is missing or rejected — stop and ask the user for
-`BUGCROWD_API_TOKEN` rather than retrying. Exit `2` is a usage error you made; re-read
-`--help` and fix the command.
+Exit code `77` means credentials are missing or rejected. Do not retry, and do not ask the
+user to export a variable into your shell — that would not persist to any run you start
+later. Ask them to store credentials once instead:
+
+```bash
+bugcrowd auth login              # saves to the config file, mode 600
+bugcrowd auth login --keychain   # macOS keychain; nothing plaintext on disk
+```
+
+After that, credentials resolve automatically in every process, so you can spawn your own
+runs with no environment setup. You never need to read, echo, or pass the token yourself —
+if you find yourself about to put a credential in a command line, don't; it would land in
+shell history and in this transcript.
+
+Exit `2` is a usage error you made; re-read `--help` and fix the command.
 
 ## Always use `--json`
 
