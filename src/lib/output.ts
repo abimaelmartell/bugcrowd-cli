@@ -87,10 +87,9 @@ export class Output {
       return;
     }
     this.table(records, columns);
-    if (options.footer) {
-      this.line();
-      this.line(this.dim(options.footer));
-    }
+    // Footers go to stderr: they are guidance, not data, so `... | wc -l` and friends
+    // still see only table rows when text output is piped.
+    if (options.footer) process.stderr.write(`${this.dim(options.footer)}\n`);
   }
 
   /** Renders a single record: a field block in text mode, the object otherwise. */

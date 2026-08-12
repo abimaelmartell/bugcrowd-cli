@@ -39,7 +39,8 @@
     "watch": "tsc -p tsconfig.json --watch",
     "test": "tsc -p tsconfig.test.json && cd build-test && node --test",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "verify": "npm run build && npm test"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

@@ -130,7 +130,12 @@ Groups accept short aliases (`sub`, `subs`, `prog`, `org`, `eng`), and
 | `--raw` | The untouched JSON:API response |
 
 Text tables truncate long values **only when attached to a terminal**. Piped or redirected
-output keeps every character, so nothing is silently lost in a script.
+output keeps every character, so nothing is silently lost in a script. Row counts and
+other hints go to stderr, so stdout stays purely tabular even in text mode.
+
+Relationships are expanded exactly as far as `include=` asked for, and no further: a
+relationship that was not side-loaded stays a `{type, id}` identifier rather than pulling
+in the rest of the response.
 
 `--json` is the format to reach for when something else consumes the output. Compare:
 
@@ -178,6 +183,9 @@ bugcrowd submissions list --blocked-by customer
 ```
 
 ## Pagination
+
+List commands report the matching total when the API provides one, so `Showing 25 of 340`
+makes clear that a page is not the whole set.
 
 `--limit` sets the page size (max 100, the server's ceiling). `--all` follows the API's
 `next` links until every match is collected; `--max N` stops after N records and implies
@@ -274,6 +282,7 @@ mkdir -p ~/.claude/skills && cp -r skills/bugcrowd ~/.claude/skills/
 npm install
 npm run build      # compile to dist/
 npm test           # typecheck + run the test suite
+npm run verify     # build dist/ and run the suite, so dist/ is never stale
 npm run typecheck
 ```
 
