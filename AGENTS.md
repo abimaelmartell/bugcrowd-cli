@@ -2,6 +2,8 @@
 
 Notes for AI coding agents driving this CLI. Humans should read [README.md](README.md).
 
+This is an unofficial third-party client for Bugcrowd's public API, not Bugcrowd software.
+
 ## Setup check
 
 Run this first. It verifies credentials and tells you which program codes exist, which you

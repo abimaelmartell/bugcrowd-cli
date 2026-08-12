@@ -1,6 +1,8 @@
 # bugcrowd-cli
 
-A command-line client for the [Bugcrowd REST API](https://docs.bugcrowd.com/api/1.1.0/).
+An **unofficial** command-line client for the [Bugcrowd REST API](https://docs.bugcrowd.com/api/1.1.0/).
+Not affiliated with, endorsed by, or supported by Bugcrowd. "Bugcrowd" is their trademark;
+this project just talks to their public API.
 
 Bugcrowd's API is [JSON:API](https://jsonapi.org/), which means a single submission
 arrives split across `data.attributes`, `data.relationships`, and a top-level `included`
@@ -273,7 +275,11 @@ For Claude Code specifically, [`skills/bugcrowd/`](skills/bugcrowd/SKILL.md) is 
 installable skill — copy it in and Claude will load it whenever a task touches Bugcrowd:
 
 ```bash
+# from a clone
 mkdir -p ~/.claude/skills && cp -r skills/bugcrowd ~/.claude/skills/
+
+# or from the installed package
+mkdir -p ~/.claude/skills && cp -r "$(npm root -g)/bugcrowd-cli/skills/bugcrowd" ~/.claude/skills/
 ```
 
 ## Development

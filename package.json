@@ -1,7 +1,7 @@
 {
   "name": "bugcrowd-cli",
   "version": "0.1.0",
-  "description": "Command-line client for the Bugcrowd REST API, built for humans and AI coding agents.",
+  "description": "Unofficial command-line client for the Bugcrowd REST API, built for humans and AI coding agents.",
   "keywords": [
     "bugcrowd",
     "cli",
@@ -30,6 +30,8 @@
   },
   "files": [
     "dist",
+    "src",
+    "skills",
     "README.md",
     "AGENTS.md",
     "LICENSE"
