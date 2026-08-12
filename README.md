@@ -296,6 +296,42 @@ Zero runtime dependencies; TypeScript and `@types/node` are the only devDependen
 Tests use the built-in `node:test` runner and a stubbed `fetch`, so they never touch the
 network.
 
+## Releasing
+
+Publishing is automated. Bump the version and push to `main`:
+
+```bash
+npm version patch      # or minor / major — commits and tags locally
+git push origin main
+```
+
+The [release workflow](.github/workflows/release.yml) notices the changed version in
+`package.json`, runs the build and test suite against that exact tree, publishes to npm,
+then tags the commit and opens a GitHub release.
+
+Authentication uses npm **Trusted Publishing** (OIDC): the workflow exchanges a GitHub
+identity token for a short-lived registry credential, so no npm token is stored in the
+repo or in Actions secrets. Published tarballs carry build provenance, so anyone can
+verify which commit and workflow produced them:
+
+```bash
+npm audit signatures
+```
+
+The workflow is idempotent — a version already on the registry is skipped rather than
+re-published — and it refuses to publish a version older than the current `latest`, so a
+mistaken bump fails loudly instead of producing a release npm will not tag.
+
+One-time setup on npmjs.com, under the package's **Settings -> Trusted Publisher**:
+
+| Field | Value |
+| --- | --- |
+| Publisher | GitHub Actions |
+| Organization / user | `abimaelmartell` |
+| Repository | `bugcrowd-cli` |
+| Workflow filename | `release.yml` |
+| Environment | `npm-publish` (optional; must match if set) |
+
 ## License
 
 MIT

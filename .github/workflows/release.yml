@@ -1,0 +1,138 @@
+name: Release
+
+# Publishes to npm whenever the version in package.json changes on main.
+#
+# Authentication uses npm Trusted Publishing (OIDC): the job exchanges a GitHub
+# identity token for a short-lived registry credential, so no npm token is stored
+# anywhere. This also attaches build provenance, letting anyone verify the tarball
+# was built from this repo at a specific commit.
+#
+# Requires a one-time setup on npmjs.com: package Settings -> Trusted Publisher ->
+# GitHub Actions, pointing at this repo and this workflow file.
+
+on:
+  push:
+    branches: [main]
+    # Any change to package.json is worth checking; the gate below decides whether
+    # the version actually moved.
+    paths: ["package.json"]
+  # Lets the gate be exercised without touching package.json. Safe: an already
+  # published version is skipped rather than re-published.
+  workflow_dispatch:
+
+# Never let two releases run at once, and never cancel one mid-publish.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  gate:
+    name: Check whether the version needs publishing
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare package.json against the registry
+        id: check
+        run: |
+          set -euo pipefail
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Local: $NAME@$VERSION"
+
+          # Asking for the exact version makes this idempotent: a re-run, or a
+          # package.json edit that did not touch the version, simply skips.
+          if npm view "$NAME@$VERSION" version >/dev/null 2>&1; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$NAME@$VERSION is already on the registry — nothing to do."
+            exit 0
+          fi
+
+          LATEST=$(npm view "$NAME" version 2>/dev/null || echo "none")
+          echo "Registry latest: $LATEST"
+
+          # Guard against an accidental downgrade, which would publish a version
+          # that npm then refuses to tag as latest, leaving a confusing release.
+          if [ "$LATEST" != "none" ]; then
+            node -e '
+              const [latest, next] = process.argv.slice(1);
+              const parse = (v) => v.split("-")[0].split(".").map(Number);
+              const [a, b] = [parse(latest), parse(next)];
+              for (let i = 0; i < 3; i++) {
+                if ((b[i] ?? 0) > (a[i] ?? 0)) process.exit(0);
+                if ((b[i] ?? 0) < (a[i] ?? 0)) {
+                  console.error(`Refusing to publish ${next}: it is older than ${latest}.`);
+                  process.exit(1);
+                }
+              }
+              console.error(`Refusing to publish ${next}: same core version as ${latest}.`);
+              process.exit(1);
+            ' "$LATEST" "$VERSION"
+          fi
+
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+          echo "::notice::Will publish $NAME@$VERSION (registry latest is $LATEST)."
+
+  publish:
+    name: Publish ${{ needs.gate.outputs.version }}
+    needs: gate
+    if: needs.gate.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      # Required for Trusted Publishing: mints the OIDC token npm exchanges.
+      id-token: write
+      # Required to push the release tag and create the GitHub release.
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+
+      - name: Ensure npm supports trusted publishing
+        # OIDC publishing needs npm >= 11.5.1; pin to the latest 11.x rather than
+        # whatever the runner image happens to ship.
+        run: |
+          npm install -g npm@^11
+          npm --version
+
+      - run: npm ci
+
+      # Build and test the exact tree being published. `verify` builds dist/ first so
+      # a stale build cannot be shipped.
+      - run: npm run verify
+
+      - name: Publish to npm
+        # No NODE_AUTH_TOKEN: the OIDC exchange provides the credential, and npm
+        # attaches provenance automatically when publishing this way.
+        run: npm publish
+
+      - name: Tag the release
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push origin "v$VERSION"
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.gate.outputs.version }}
+        run: |
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --generate-notes \
+            --verify-tag
