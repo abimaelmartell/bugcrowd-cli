@@ -1,0 +1,48 @@
+{
+  "name": "bugcrowd-cli",
+  "version": "0.1.0",
+  "description": "Command-line client for the Bugcrowd REST API, built for humans and AI coding agents.",
+  "keywords": [
+    "bugcrowd",
+    "cli",
+    "security",
+    "bug-bounty",
+    "vulnerability",
+    "triage",
+    "agent"
+  ],
+  "license": "MIT",
+  "author": "Abimael Martell",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abimaelmartell/bugcrowd-cli.git"
+  },
+  "homepage": "https://github.com/abimaelmartell/bugcrowd-cli#readme",
+  "bugs": {
+    "url": "https://github.com/abimaelmartell/bugcrowd-cli/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "bin": {
+    "bugcrowd": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "AGENTS.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "watch": "tsc -p tsconfig.json --watch",
+    "test": "tsc -p tsconfig.test.json && node --test \"build-test/test/*.test.js\"",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}
