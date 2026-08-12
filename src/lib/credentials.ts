@@ -6,12 +6,37 @@ import { platform } from "node:process";
 import { configPath, type ConfigFile } from "./config.js";
 import { CliError } from "./errors.js";
 
-/** Keychain service name; the account is fixed so lookups need no extra state. */
-export const KEYCHAIN_SERVICE = "bugcrowd-cli";
+export const DEFAULT_KEYCHAIN_SERVICE = "bugcrowd-cli";
 export const KEYCHAIN_ACCOUNT = "api-token";
 
+/**
+ * Keychain service name, overridable via BUGCROWD_KEYCHAIN_SERVICE.
+ *
+ * The override exists so tests never operate on the real entry. The keychain is a
+ * single global namespace with no equivalent of BUGCROWD_CONFIG, so without this a
+ * test that exercises the delete path destroys the developer's live credential —
+ * which is exactly what happened once.
+ */
+export function keychainService(): string {
+  const override = process.env["BUGCROWD_KEYCHAIN_SERVICE"];
+  return override && override !== "" ? override : DEFAULT_KEYCHAIN_SERVICE;
+}
+
 /** The command written into the config file when credentials live in the keychain. */
-export const KEYCHAIN_TOKEN_COMMAND = `security find-generic-password -s ${KEYCHAIN_SERVICE} -a ${KEYCHAIN_ACCOUNT} -w`;
+export function keychainTokenCommand(): string {
+  return `security find-generic-password -s ${keychainService()} -a ${KEYCHAIN_ACCOUNT} -w`;
+}
+
+/**
+ * Whether a configured `token_command` is a keychain lookup.
+ *
+ * Matches on shape rather than string equality against the current service name, so a
+ * config written under a different service (or an older version) is still recognised as
+ * keychain-backed instead of being treated as an unrelated custom helper.
+ */
+export function isKeychainCommand(command: string | undefined): boolean {
+  return command !== undefined && /^security\s+find-generic-password\b/.test(command.trim());
+}
 
 export function isMacOS(): boolean {
   return platform === "darwin";
@@ -71,7 +96,7 @@ export function writeConfig(path: string, config: ConfigFile): void {
 export async function keychainStore(token: string): Promise<void> {
   const result = await run(
     "security",
-    ["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-U", "-w"],
+    ["add-generic-password", "-s", keychainService(), "-a", KEYCHAIN_ACCOUNT, "-U", "-w"],
     { input: `${token}\n${token}\n`, detached: true },
   );
 
@@ -103,7 +128,7 @@ export function keychainRead(): string | undefined {
   try {
     const out = execFileSync(
       "security",
-      ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w"],
+      ["find-generic-password", "-s", keychainService(), "-a", KEYCHAIN_ACCOUNT, "-w"],
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30_000 },
     );
     const value = out.replace(/\n$/, "");
@@ -154,7 +179,7 @@ function firstLine(text: string): string {
 /** Removes the keychain entry. Returns false when there was nothing stored. */
 export function keychainDelete(): boolean {
   try {
-    execFileSync("security", ["delete-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT], {
+    execFileSync("security", ["delete-generic-password", "-s", keychainService(), "-a", KEYCHAIN_ACCOUNT], {
       stdio: "ignore",
       timeout: 30_000,
     });

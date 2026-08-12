@@ -68,7 +68,10 @@ stdout:
 { "token_command": "vault kv get -field=token secret/bugcrowd" }
 ```
 
-`bugcrowd auth logout` removes whatever was stored.
+Re-running `auth login` rotates the stored credential. It says what is already stored
+before prompting, and warns if you are about to move a secret out of the keychain into a
+plaintext file. Switching backends moves the credential rather than copying it, so no
+orphaned entry is left behind. `bugcrowd auth logout` removes whatever was stored.
 
 ### Resolution order
 
@@ -247,6 +250,7 @@ for piping.
 | `BUGCROWD_API_VERSION` | Value for the `Bugcrowd-Version` header |
 | `BUGCROWD_BASE_URL` | Override the API base URL |
 | `BUGCROWD_CONFIG` | Path to the config file |
+| `BUGCROWD_KEYCHAIN_SERVICE` | Keychain service name; override to isolate from real credentials |
 | `BUGCROWD_DEBUG` | Print stack traces on unexpected errors |
 | `NO_COLOR` / `FORCE_COLOR` | Disable / force ANSI color |
 

@@ -197,21 +197,33 @@ test("a token_command file is not warned about even when loose", () => {
 });
 
 /**
- * macOS-only: exercises the real keychain round trip.
+ * macOS-only: exercises the keychain round trip against an isolated service name.
  *
- * This is the regression guard for a bug where the write appeared to succeed but stored
- * an empty password: `security` reads the value from /dev/tty rather than piped stdin
- * whenever it has a controlling terminal, so the spawn must be detached. A unit test
- * cannot create a controlling terminal, but it can assert that what goes in comes back
- * out, which is the property that was silently violated.
+ * BUGCROWD_KEYCHAIN_SERVICE exists precisely so this test cannot touch the real
+ * `bugcrowd-cli` entry. The keychain is one global namespace with no equivalent of
+ * BUGCROWD_CONFIG, so an earlier version of this test destroyed a live credential.
+ *
+ * It is also the regression guard for the write itself: `security` reads the password
+ * from /dev/tty rather than piped stdin whenever it has a controlling terminal, so the
+ * spawn must be detached. A test cannot create a controlling terminal, but it can assert
+ * that what goes in comes back out — the property that was silently violated.
  */
 const macOnly = { skip: process.platform !== "darwin" ? "macOS only" : false };
+const TEST_SERVICE = "bugcrowd-cli-test-do-not-use";
 
 test("keychain store/read/delete round-trips the exact value", macOnly, async () => {
-  const { keychainDelete, keychainRead, keychainStore } = await import("../src/lib/credentials.js");
+  const { keychainDelete, keychainRead, keychainService, keychainStore, DEFAULT_KEYCHAIN_SERVICE } = await import(
+    "../src/lib/credentials.js"
+  );
 
-  const existing = keychainRead();
+  const saved = process.env["BUGCROWD_KEYCHAIN_SERVICE"];
+  process.env["BUGCROWD_KEYCHAIN_SERVICE"] = TEST_SERVICE;
   try {
+    // Guard the guard: if the override ever stops working, fail rather than proceed to
+    // mutate the real entry.
+    assert.equal(keychainService(), TEST_SERVICE);
+    assert.notEqual(keychainService(), DEFAULT_KEYCHAIN_SERVICE);
+
     // A value with characters that would be mangled by shell interpolation.
     const token = "round:trip$test with spaces&more";
     await keychainStore(token);
@@ -225,8 +237,22 @@ test("keychain store/read/delete round-trips the exact value", macOnly, async ()
     assert.equal(keychainRead(), undefined);
     assert.equal(keychainDelete(), false, "deleting a missing entry reports false");
   } finally {
-    // Never leave a developer's own keychain entry clobbered by the test run.
     keychainDelete();
-    if (existing !== undefined) await keychainStore(existing);
+    if (saved === undefined) delete process.env["BUGCROWD_KEYCHAIN_SERVICE"];
+    else process.env["BUGCROWD_KEYCHAIN_SERVICE"] = saved;
   }
+});
+
+test("isKeychainCommand recognises keychain lookups by shape, not exact text", async () => {
+  const { isKeychainCommand } = await import("../src/lib/credentials.js");
+
+  assert.equal(isKeychainCommand("security find-generic-password -s bugcrowd-cli -a api-token -w"), true);
+  // A config written under a different service is still keychain-backed.
+  assert.equal(isKeychainCommand("security find-generic-password -s other -a api-token -w"), true);
+  assert.equal(isKeychainCommand("  security   find-generic-password -s x -w"), true);
+  // Unrelated helpers must not be mistaken for one, or login would delete their entry.
+  assert.equal(isKeychainCommand("op read op://Private/Bugcrowd/credential"), false);
+  assert.equal(isKeychainCommand("pass show bugcrowd/api"), false);
+  assert.equal(isKeychainCommand("security add-generic-password -s x"), false);
+  assert.equal(isKeychainCommand(undefined), false);
 });

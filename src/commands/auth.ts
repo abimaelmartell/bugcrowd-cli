@@ -7,7 +7,8 @@ import {
   isMacOS,
   keychainDelete,
   keychainStore,
-  KEYCHAIN_TOKEN_COMMAND,
+  keychainTokenCommand,
+  isKeychainCommand,
   promptSecret,
   readAllStdin,
   readConfigForWrite,
@@ -63,6 +64,32 @@ const authLogin: Command = {
       });
     }
 
+    // Say up front when this would replace working credentials. Re-running `auth login`
+    // is a legitimate way to rotate a token, but doing it by accident should not be
+    // silent — especially when it would move the secret to weaker storage.
+    const existingPath = configPath();
+    const existing = readConfigForWrite(existingPath);
+    const storedIn =
+      isKeychainCommand(existing.token_command)
+        ? "the macOS keychain"
+        : existing.token_command !== undefined
+          ? `a token_command in ${existingPath}`
+          : existing.token !== undefined
+            ? existingPath
+            : undefined;
+
+    if (storedIn !== undefined && !ctx.args.bool("stdin")) {
+      process.stderr.write(`Credentials are already stored in ${storedIn}.\n`);
+      if (isKeychainCommand(existing.token_command) && !useKeychain) {
+        process.stderr.write(
+          "Continuing will move them out of the keychain into a plaintext config file.\n" +
+            "Re-run with --keychain to keep keychain storage, or Ctrl-C to leave things as they are.\n",
+        );
+      } else {
+        process.stderr.write("Continuing replaces them. Ctrl-C to leave things as they are.\n");
+      }
+    }
+
     const raw = ctx.args.bool("stdin")
       ? await readAllStdin()
       : await promptSecret("Bugcrowd API credentials (username:password): ");
@@ -107,20 +134,31 @@ const authLogin: Command = {
 
     const path = configPath();
     const config = readConfigForWrite(path);
+    let movedOutOfKeychain = false;
 
     if (useKeychain) {
       await keychainStore(token);
-      config.token_command = KEYCHAIN_TOKEN_COMMAND;
+      config.token_command = keychainTokenCommand();
       // Drop any literal token so the keychain becomes the single source of truth.
       delete config.token;
     } else {
       config.token = token;
-      if (config.token_command === KEYCHAIN_TOKEN_COMMAND) delete config.token_command;
+      if (isKeychainCommand(config.token_command)) {
+        delete config.token_command;
+        // Switching backends moves the credential rather than duplicating it: leaving
+        // the old entry behind would strand a secret nothing references any more.
+        movedOutOfKeychain = isMacOS() && keychainDelete();
+      }
     }
     writeConfig(path, config);
 
     if (!ctx.out.isText) {
-      ctx.out.json({ ok: true, storage: useKeychain ? "keychain" : "config-file", config_path: path });
+      ctx.out.json({
+        ok: true,
+        storage: useKeychain ? "keychain" : "config-file",
+        config_path: path,
+        removed_keychain_entry: movedOutOfKeychain,
+      });
       return;
     }
     ctx.out.line(
@@ -128,6 +166,7 @@ const authLogin: Command = {
         ? `Stored in the macOS keychain. ${path} now holds only a lookup command.`
         : `Stored in ${path} (mode 600).`,
     );
+    if (movedOutOfKeychain) ctx.out.line("Removed the previous keychain entry.");
     ctx.out.line("Later runs pick this up automatically — no environment variables needed.");
   },
 };
@@ -147,7 +186,7 @@ const authLogout: Command = {
       delete config.token;
       removed.push(`token in ${path}`);
     }
-    if (config.token_command === KEYCHAIN_TOKEN_COMMAND) {
+    if (isKeychainCommand(config.token_command)) {
       delete config.token_command;
       removed.push(`keychain lookup in ${path}`);
     }
