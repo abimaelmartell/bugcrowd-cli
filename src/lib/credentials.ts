@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { platform } from "node:process";
@@ -51,22 +51,104 @@ export function writeConfig(path: string, config: ConfigFile): void {
 }
 
 /**
- * Stores a token in the macOS keychain.
+ * Stores a token in the macOS keychain, then reads it back to prove it took.
  *
  * The value goes in on stdin rather than as an argv element, so it never appears in
- * `ps` output. `security add-generic-password -w` reads the value twice (entry plus
- * confirmation) when it is not given inline, hence the doubled input.
+ * `ps` output. `security add-generic-password -w` with no inline value reads the
+ * password twice (entry plus confirmation), hence the doubled input.
+ *
+ * `detached` is essential rather than incidental. `security` reads the password with
+ * readpassphrase(3), which opens /dev/tty directly whenever the process has a
+ * controlling terminal — so piped stdin is ignored, and an interactive user instead
+ * gets a bare "password data for new item:" prompt. setsid (what `detached` does on
+ * POSIX) leaves the child with no controlling terminal, so readpassphrase falls back
+ * to stdin. Without this, an interactive `auth login --keychain` silently stores an
+ * empty password.
+ *
+ * The read-back is the safety net: a keychain write that appears to succeed but stores
+ * the wrong value must not leave the config file pointing at a broken entry.
  */
-export function keychainStore(token: string): void {
-  try {
-    execFileSync(
-      "security",
-      ["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-U", "-w"],
-      { input: `${token}\n${token}\n`, stdio: ["pipe", "ignore", "pipe"], timeout: 30_000 },
-    );
-  } catch (err) {
-    throw new CliError(`could not write to the keychain: ${describeExec(err)}`, { exitCode: 1 });
+export async function keychainStore(token: string): Promise<void> {
+  const result = await run(
+    "security",
+    ["add-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-U", "-w"],
+    { input: `${token}\n${token}\n`, detached: true },
+  );
+
+  if (result.code !== 0) {
+    throw new CliError(`could not write to the keychain: ${firstLine(result.stderr) || `exit ${result.code}`}`, {
+      exitCode: 1,
+    });
   }
+
+  const stored = keychainRead();
+  if (stored !== token) {
+    // Leave nothing half-configured behind.
+    keychainDelete();
+    throw new CliError("the keychain did not store the credentials correctly", {
+      exitCode: 1,
+      details: [
+        stored === undefined
+          ? "The entry could not be read back after writing."
+          : "The value read back did not match what was written.",
+        "Nothing was saved. Use `bugcrowd auth login` without --keychain to store it in",
+        "the config file (mode 600) instead.",
+      ],
+    });
+  }
+}
+
+/** Reads the stored token, or undefined when there is no readable entry. */
+export function keychainRead(): string | undefined {
+  try {
+    const out = execFileSync(
+      "security",
+      ["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", KEYCHAIN_ACCOUNT, "-w"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 30_000 },
+    );
+    const value = out.replace(/\n$/, "");
+    return value === "" ? undefined : value;
+  } catch {
+    return undefined;
+  }
+}
+
+interface RunResult {
+  code: number;
+  stderr: string;
+}
+
+/** Promise wrapper over spawn, needed because execFileSync cannot detach. */
+function run(
+  command: string,
+  args: readonly string[],
+  options: { input?: string; detached?: boolean },
+): Promise<RunResult> {
+  return new Promise((resolve) => {
+    const child = spawn(command, [...args], {
+      // stderr is captured, not inherited: `security` writes its password prompts there,
+      // and they would otherwise appear on the user's terminal looking like a real prompt.
+      stdio: ["pipe", "ignore", "pipe"],
+      detached: options.detached ?? false,
+    });
+
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", (err) => resolve({ code: -1, stderr: err.message }));
+    child.on("close", (code) => resolve({ code: code ?? -1, stderr }));
+
+    const timer = setTimeout(() => child.kill("SIGKILL"), 30_000);
+    child.on("close", () => clearTimeout(timer));
+
+    if (options.input !== undefined) child.stdin?.write(options.input);
+    child.stdin?.end();
+  });
+}
+
+function firstLine(text: string): string {
+  return text.trim().split("\n")[0]?.trim() ?? "";
 }
 
 /** Removes the keychain entry. Returns false when there was nothing stored. */
@@ -80,13 +162,6 @@ export function keychainDelete(): boolean {
   } catch {
     return false;
   }
-}
-
-function describeExec(err: unknown): string {
-  const stderr = (err as { stderr?: Buffer | string }).stderr;
-  const text = typeof stderr === "string" ? stderr : stderr?.toString("utf8");
-  if (text && text.trim() !== "") return text.trim().split("\n")[0]!;
-  return (err as Error).message;
 }
 
 /**

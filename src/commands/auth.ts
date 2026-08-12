@@ -109,7 +109,7 @@ const authLogin: Command = {
     const config = readConfigForWrite(path);
 
     if (useKeychain) {
-      keychainStore(token);
+      await keychainStore(token);
       config.token_command = KEYCHAIN_TOKEN_COMMAND;
       // Drop any literal token so the keychain becomes the single source of truth.
       delete config.token;

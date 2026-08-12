@@ -7,7 +7,7 @@ import { BugcrowdClient } from "./lib/client.js";
 import { GLOBAL_FLAGS, type Command, type Context } from "./lib/command.js";
 import { resolveConfig } from "./lib/config.js";
 import { ApiError, CliError } from "./lib/errors.js";
-import { commandHelp, rootHelp } from "./lib/help.js";
+import { commandHelp, groupHelp, rootHelp } from "./lib/help.js";
 import { Output, type Format } from "./lib/output.js";
 
 const VERSION = "0.1.0";
@@ -65,6 +65,13 @@ async function main(argv: string[]): Promise<number> {
   if (resolution === undefined) {
     if (wantsHelp) {
       process.stdout.write(`${rootHelp(COMMANDS)}\n`);
+      return 0;
+    }
+    // A bare group name is a question, not an error: list what it contains.
+    const group = argv[0] !== undefined ? (GROUP_ALIASES[argv[0]] ?? argv[0]) : undefined;
+    const members = COMMANDS.filter((c) => c.name.startsWith(`${group} `));
+    if (group !== undefined && members.length > 0 && argv.length === 1) {
+      process.stdout.write(`${groupHelp(group, members)}\n`);
       return 0;
     }
     throw unknownCommand(argv);

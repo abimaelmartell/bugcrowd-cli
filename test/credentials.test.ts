@@ -195,3 +195,38 @@ test("a token_command file is not warned about even when loose", () => {
 
   assert.equal(written.join(""), "");
 });
+
+/**
+ * macOS-only: exercises the real keychain round trip.
+ *
+ * This is the regression guard for a bug where the write appeared to succeed but stored
+ * an empty password: `security` reads the value from /dev/tty rather than piped stdin
+ * whenever it has a controlling terminal, so the spawn must be detached. A unit test
+ * cannot create a controlling terminal, but it can assert that what goes in comes back
+ * out, which is the property that was silently violated.
+ */
+const macOnly = { skip: process.platform !== "darwin" ? "macOS only" : false };
+
+test("keychain store/read/delete round-trips the exact value", macOnly, async () => {
+  const { keychainDelete, keychainRead, keychainStore } = await import("../src/lib/credentials.js");
+
+  const existing = keychainRead();
+  try {
+    // A value with characters that would be mangled by shell interpolation.
+    const token = "round:trip$test with spaces&more";
+    await keychainStore(token);
+    assert.equal(keychainRead(), token);
+
+    // -U must overwrite rather than create a second entry.
+    await keychainStore("second:value");
+    assert.equal(keychainRead(), "second:value");
+
+    assert.equal(keychainDelete(), true);
+    assert.equal(keychainRead(), undefined);
+    assert.equal(keychainDelete(), false, "deleting a missing entry reports false");
+  } finally {
+    // Never leave a developer's own keychain entry clobbered by the test run.
+    keychainDelete();
+    if (existing !== undefined) await keychainStore(existing);
+  }
+});

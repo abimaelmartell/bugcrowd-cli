@@ -55,6 +55,23 @@ export function rootHelp(commands: readonly Command[]): string {
   return lines.join("\n");
 }
 
+/**
+ * Help for a bare group name, e.g. `bugcrowd auth`. A group is not itself runnable, but
+ * naming one is a reasonable way to ask "what's in here?" rather than a mistake.
+ */
+export function groupHelp(group: string, members: readonly Command[]): string {
+  const lines: string[] = [`bugcrowd ${group} — ${members.length} command${members.length === 1 ? "" : "s"}`, ""];
+  lines.push(`Usage: ${BINARY} ${group} <command> [flags]`);
+  lines.push("");
+  const width = Math.max(...members.map((c) => c.name.length));
+  for (const command of members) {
+    lines.push(`  ${command.name.padEnd(width)}  ${command.summary}`);
+  }
+  lines.push("");
+  lines.push(`Run \`${BINARY} ${group} <command> --help\` for that command's flags.`);
+  return lines.join("\n");
+}
+
 /** Per-command help: usage line, description, positionals, flags, examples. */
 export function commandHelp(command: Command): string {
   const lines: string[] = [];
