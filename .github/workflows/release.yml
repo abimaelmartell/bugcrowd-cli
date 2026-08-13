@@ -35,7 +35,7 @@ jobs:
       version: ${{ steps.check.outputs.version }}
       publish: ${{ steps.check.outputs.publish }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Compare package.json against the registry
         id: check
@@ -91,7 +91,7 @@ jobs:
       # Required to push the release tag and create the GitHub release.
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v7
         with:
