@@ -1,5 +1,11 @@
 # bugcrowd-cli
 
+[![npm](https://img.shields.io/npm/v/bugcrowd-cli?logo=npm&color=cb3837)](https://www.npmjs.com/package/bugcrowd-cli)
+[![CI](https://github.com/abimaelmartell/bugcrowd-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/abimaelmartell/bugcrowd-cli/actions/workflows/ci.yml)
+[![node](https://img.shields.io/node/v/bugcrowd-cli?logo=node.js&logoColor=white&color=5FA04E)](https://nodejs.org)
+[![license](https://img.shields.io/npm/l/bugcrowd-cli?color=blue)](LICENSE)
+[![unpacked size](https://img.shields.io/npm/unpacked-size/bugcrowd-cli?color=informational)](https://www.npmjs.com/package/bugcrowd-cli?activeTab=code)
+
 An **unofficial** command-line client for the [Bugcrowd REST API](https://docs.bugcrowd.com/api/1.1.0/).
 Not affiliated with, endorsed by, or supported by Bugcrowd. "Bugcrowd" is their trademark;
 this project just talks to their public API.

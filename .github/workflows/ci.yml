@@ -21,6 +21,17 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm test
+      # The README and package description both promise zero runtime dependencies, and
+      # a badge cannot verify that. Fail the build rather than let the claim rot.
+      - name: Assert no runtime dependencies
+        run: |
+          COUNT=$(node -p "Object.keys(require('./package.json').dependencies || {}).length")
+          echo "runtime dependencies: $COUNT"
+          if [ "$COUNT" -ne 0 ]; then
+            echo "::error::Zero runtime dependencies is a documented guarantee, but package.json declares $COUNT."
+            exit 1
+          fi
+
       # A smoke test that the built binary loads and prints help without credentials.
       - run: node dist/index.js --help
       - run: node dist/index.js submissions list --help
