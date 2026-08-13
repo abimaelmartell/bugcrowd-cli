@@ -298,7 +298,14 @@ npm run verify     # build dist/ and run the suite, so dist/ is never stale
 npm run typecheck
 ```
 
-Zero runtime dependencies; TypeScript and `@types/node` are the only devDependencies.
+Zero runtime dependencies — CI fails the build if `dependencies` is ever non-empty, since
+that is a documented guarantee. TypeScript and `@types/node` are the only devDependencies.
+
+`@types/node` is pinned to the **oldest** Node in `engines` (currently 20), not the latest.
+Types for a newer Node would let the code compile against APIs that do not exist on the
+floor version, turning a compile-time error into a runtime failure for anyone on Node 20.
+Dependabot is configured to leave its major version alone; raise it only when the `engines`
+floor is raised.
 Tests use the built-in `node:test` runner and a stubbed `fetch`, so they never touch the
 network.
 

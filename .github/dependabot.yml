@@ -1,0 +1,23 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    ignore:
+      # @types/node is deliberately pinned to the oldest Node we support (see the
+      # `engines` field). Types for a newer Node would let code compile against APIs
+      # that do not exist on the floor version, turning a compile error into a runtime
+      # failure for those users. Raise this only when the engines floor is raised.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
